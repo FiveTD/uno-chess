@@ -1,3 +1,7 @@
+use uno_chess::uno_deck::*;
+
 fn main() {
-    println!("Hello, world!");
+    for c in UnoCard::all_cards() {
+        println!("{}", c.to_string());
+    }
 }
