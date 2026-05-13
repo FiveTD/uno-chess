@@ -10,12 +10,16 @@ pub enum UnoColor {
     Yellow,
     Green,
     Blue,
-    Wild,
 }
 
 impl fmt::Display for UnoColor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            UnoColor::Red => write!(f, "Red"),
+            UnoColor::Yellow => write!(f, "Yellow"),
+            UnoColor::Green => write!(f, "Green"),
+            UnoColor::Blue => write!(f, "Blue"),
+        }
     }
 }
 
@@ -29,38 +33,52 @@ pub enum UnoValue {
     PlusFour,
 }
 
-impl fmt::Display for UnoValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match *self {
-            UnoValue::Number(n) => n.to_string(),
-            UnoValue::PlusTwo => "+2".to_string(),
-            UnoValue::PlusFour => "+4".to_string(),
-            UnoValue::Wild => "".to_string(),
-            _ => format!("{:?}", self)
-        })
+impl UnoValue {
+    pub fn number(n: u8) -> Option<Self> {
+        if n <= 9 { Some(Self::Number(n)) } else { None }
     }
 }
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd)]
+impl fmt::Display for UnoValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnoValue::Number(n) => write!(f, "{n}"),
+            UnoValue::PlusTwo => write!(f, "+2"),
+            UnoValue::PlusFour => write!(f, "Wild +4"),
+            UnoValue::Wild => write!(f, "Wild"),
+            UnoValue::Skip => write!(f, "Skip"),
+            UnoValue::Reverse => write!(f, "Reverse"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
 pub struct UnoCard {
-    color: UnoColor,
+    color: Option<UnoColor>,
     value: UnoValue,
 }
 
-const ALL_CARDS: [UnoCard; 108] = UnoCard::build_deck();
+const STANDARD_DECK: [UnoCard; 108] = UnoCard::build_deck();
 
 impl UnoCard {
-    pub const fn new(color: UnoColor, value: UnoValue) -> Self {
+    pub const fn new(color: Option<UnoColor>, value: UnoValue) -> Self {
         Self { color, value }
     }
 
     /// Array slice of a complete standard Uno deck
-    pub fn all_cards() -> &'static [UnoCard] {
-        &ALL_CARDS
+    pub fn standard_deck() -> &'static [UnoCard] {
+        &STANDARD_DECK
+    }
+
+    pub fn can_play_on(&self, other: &UnoCard) -> bool {
+        self.value == other.value
+            || self.color == other.color
+            || self.color == None
+            || other.color == None
     }
 
     const fn build_deck() -> [UnoCard; 108] {
-        let mut cards = [UnoCard::new(UnoColor::Wild, UnoValue::Wild); 108];
+        let mut cards = [UnoCard::new(None, UnoValue::Wild); 108];
         let mut i = 0;
 
         // Colors
@@ -71,8 +89,8 @@ impl UnoCard {
 
         // Wilds
         const_for!(_ in 0..4 => {
-            cards[i] = UnoCard::new(UnoColor::Wild, UnoValue::Wild);
-            cards[i+4] = UnoCard::new(UnoColor::Wild, UnoValue::PlusFour);
+            cards[i] = UnoCard::new(None, UnoValue::Wild);
+            cards[i+4] = UnoCard::new(None, UnoValue::PlusFour);
             i += 1;
         });
 
@@ -81,43 +99,51 @@ impl UnoCard {
 
     const fn add_color(cards: &mut [UnoCard; 108], mut i: usize, color: UnoColor) -> usize {
         // One zero
-        cards[i] = UnoCard::new(color, UnoValue::Number(0));
+        cards[i] = UnoCard::new(Some(color), UnoValue::Number(0));
         i += 1;
 
         // Two of 1..=9
         const_for!(n in 1..10 => {
-            cards[i] = UnoCard::new(color, UnoValue::Number(n));
-            cards[i+1] = UnoCard::new(color, UnoValue::Number(n));
+            cards[i] = UnoCard::new(Some(color), UnoValue::Number(n));
+            cards[i+1] = UnoCard::new(Some(color), UnoValue::Number(n));
             i += 2;
         });
 
         // Two skips, reverses, +2s
         const_for!(_ in 0..2 => {
-            cards[i] = UnoCard::new(color, UnoValue::Skip);
-            cards[i+2] = UnoCard::new(color, UnoValue::Reverse);
-            cards[i+4] = UnoCard::new(color, UnoValue::PlusTwo);
+            cards[i] = UnoCard::new(Some(color), UnoValue::Skip);
+            cards[i+2] = UnoCard::new(Some(color), UnoValue::Reverse);
+            cards[i+4] = UnoCard::new(Some(color), UnoValue::PlusTwo);
             i += 1;
         });
 
         i + 4
     }
+
+    fn sort_key(&self) -> (bool, Option<UnoColor>, &UnoValue) {
+        (self.color.is_none(), self.color, &self.value)
+    }
 }
 
 impl Ord for UnoCard {
-    /// Sort by color, then value
-    fn cmp(&self, other: &UnoCard) -> Ordering {
-        let result = self.color.cmp(&other.color);
-        if result == Ordering::Equal {
-            self.value.cmp(&other.value)
-        } else {
-            result
-        }
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.sort_key().cmp(&other.sort_key())
+    }
+}
+
+impl PartialOrd for UnoCard {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 impl fmt::Display for UnoCard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.color.to_string(), self.value.to_string())
+        if let Some(color) = self.color {
+            write!(f, "{} {}", color, self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
     }
 }
 
@@ -127,35 +153,32 @@ pub trait Cards {
     fn cards(&self) -> &[UnoCard];
 
     /// Get cards as a mut slice
-    fn mut_cards(&mut self) -> &mut [UnoCard];
+    fn cards_mut(&mut self) -> &mut [UnoCard];
 
     /// Shuffle the cards using a Knuth shuffle
     fn shuffle(&mut self) {
-        let cards = self.mut_cards();
-        let l = cards.len();
+        let cards = self.cards_mut();
         let mut rng = rand::rng();
-        for n in 0..l {
-            let i = rng.random_range(0..l - n);
-            cards.swap(i, l - n - 1);
-        }
+        cards.shuffle(&mut rng);
     }
 
     /// Sort cards
     fn sort(&mut self) {
-        self.mut_cards().sort();
+        self.cards_mut().sort();
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UnoDeck {
     deck: Vec<UnoCard>,
     dealt: Vec<UnoCard>,
     discard: Option<UnoCard>,
+    active_color: Option<UnoColor>, // None if draw to discard is wild
 }
 
 impl UnoDeck {
     pub fn new() -> Self {
-        Self::from_cards(UnoCard::all_cards())
+        Self::from_cards(UnoCard::standard_deck())
     }
 
     pub fn from_cards(cards: &[UnoCard]) -> Self {
@@ -163,6 +186,7 @@ impl UnoDeck {
             deck: cards.to_vec(),
             dealt: Vec::with_capacity(cards.len()),
             discard: None,
+            active_color: None,
         }
     }
 
@@ -172,9 +196,9 @@ impl UnoDeck {
 
     /// Draws one card from the top of the deck.
     pub fn draw(&mut self) -> Option<UnoCard> {
-        self.deck.pop().inspect(|card| {
-            self.dealt.push(*card);
-        })
+        let card = self.deck.pop()?;
+        self.dealt.push(card);
+        Some(card)
     }
 
     /// Draws the top card to the discard pile. Returns the drawn card.
@@ -183,7 +207,7 @@ impl UnoDeck {
         self.discard
     }
 
-    /// Draws up to `count` cards and returns them as an array.
+    /// Draws up to `count` cards.
     pub fn deal(&mut self, count: usize) -> Vec<UnoCard> {
         let mut result = Vec::with_capacity(count);
         for _ in 0..count {
@@ -199,11 +223,11 @@ impl UnoDeck {
     /// Draws up to `count` cards directly to the `Hand`.
     /// Returns the number of cards actually drawn.
     pub fn draw_to_hand(&mut self, hand: &mut Hand, count: usize) -> usize {
-        let mut dealt: usize = 0;
+        let mut dealt = 0;
         for _ in 0..count {
             if let Some(card) = self.draw() {
-                dealt += 1;
                 hand.add_card(card);
+                dealt += 1;
             } else {
                 break;
             }
@@ -233,14 +257,14 @@ impl Cards for UnoDeck {
         self.deck.as_slice()
     }
 
-    fn mut_cards(&mut self) -> &mut [UnoCard] {
+    fn cards_mut(&mut self) -> &mut [UnoCard] {
         self.deck.as_mut_slice()
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Hand {
-    pub cards: Vec<UnoCard>,
+    cards: Vec<UnoCard>,
 }
 
 impl Hand {
@@ -262,8 +286,12 @@ impl Hand {
         self.cards.extend_from_slice(other);
     }
 
-    pub fn size(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.cards.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cards.is_empty()
     }
 
     pub fn clear(&mut self) {
@@ -274,17 +302,23 @@ impl Hand {
         self.cards.remove(index)
     }
 
-    /// Returns cards that can be played on a `Card`.
-    pub fn matches_card(&self, card: &UnoCard) -> Vec<UnoCard> {
+    /// Returns cards that can be played on an `UnoColor`.
+    pub fn matches_color(&self, color: &UnoColor) -> Vec<&UnoCard> {
         self.cards
             .iter()
-            .filter(|c| 
-                c.value == card.value ||
-                c.color == card.color ||
-                c.color == UnoColor::Wild ||
-                card.color == UnoColor::Wild)
-            .cloned()
+            .filter(|c| {
+                if let Some(card_color) = c.color {
+                    card_color == *color
+                } else {
+                    true
+                }
+            })
             .collect()
+    }
+
+    /// Returns cards that can be played on an `UnoCard`.
+    pub fn matches_card(&self, card: &UnoCard) -> Vec<&UnoCard> {
+        self.cards.iter().filter(|c| c.can_play_on(card)).collect()
     }
 }
 
@@ -293,7 +327,7 @@ impl Cards for Hand {
         self.cards.as_slice()
     }
 
-    fn mut_cards(&mut self) -> &mut [UnoCard] {
+    fn cards_mut(&mut self) -> &mut [UnoCard] {
         self.cards.as_mut_slice()
     }
 }
